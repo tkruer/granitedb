@@ -1,46 +1,57 @@
-use crate::options::Options;
-use crate::wal::Wal;
-use anyhow::Result;
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use crate::{bincoding::TOMBSTONE, lsmtree::LSMTree, wal::WriteAheadLog};
+use std::{collections::BTreeMap, fs, io, path::PathBuf};
 
-pub struct Db {
-    opts: Options,
-    wal: Wal,
-    mem: BTreeMap<Vec<u8>, Vec<u8>>,
-    seq: u64,
+pub struct GraniteDB {
+    pub sstable_dir: PathBuf,
+    pub threshold: usize,
+    pub wal_path: PathBuf,
 }
 
-impl Db {
-    pub fn open(opts: Options) -> Result<Self> {
-        fs::create_dir_all(&opts.path)?;
-        let wal_path = opts.path.join("wal.log");
-        let mut wal = Wal::open(&wal_path)?;
-        let mut mem = BTreeMap::new();
-        let mut seq = 0u64;
+impl GraniteDB {
+    pub fn new() -> Self {
+        let dir = PathBuf::from(".granitedb");
+        Self {
+            sstable_dir: dir.clone(),
+            threshold: 3,
+            wal_path: dir.join("wal.log"),
+        }
+    }
 
-        wal.replay(|s, k, v| {
-            seq = seq.max(s);
-            mem.insert(k.to_vec(), v.to_vec());
-            Ok(())
-        })?;
+    pub fn with_sstable_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        let d = dir.into();
+        self.wal_path = d.join("wal.log");
+        self.sstable_dir = d;
+        self
+    }
 
-        Ok(Self {
-            opts,
-            wal,
-            mem,
-            seq,
+    pub fn with_threshold(mut self, threshold: usize) -> Self {
+        self.threshold = threshold;
+        self
+    }
+
+    pub fn build(self) -> io::Result<LSMTree> {
+        fs::create_dir_all(&self.sstable_dir)?;
+
+        // replay into memtable
+        let mut memtable = BTreeMap::new();
+        if let Ok(ops) = WriteAheadLog::replay(&self.wal_path) {
+            for (key, value_opt) in ops {
+                match value_opt {
+                    Some(val) => {
+                        memtable.insert(key, val);
+                    }
+                    None => {
+                        memtable.insert(key, TOMBSTONE.to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(LSMTree {
+            memtable,
+            sstable_counter: 0, // TODO: initialize from manifest later
+            wal: WriteAheadLog::new(&self.wal_path)?,
+            threshold: self.threshold,
         })
-    }
-
-    pub fn put(&mut self, key: impl AsRef<[u8]>, val: impl AsRef<[u8]>) -> Result<()> {
-        self.seq += 1;
-        let (k, v) = (key.as_ref(), val.as_ref());
-        self.wal.append(self.seq, k, v, self.opts.wal_fsync)?;
-        self.mem.insert(k.to_vec(), v.to_vec());
-        Ok(())
-    }
-
-    pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>> {
-        Ok(self.mem.get(key.as_ref()).cloned())
     }
 }

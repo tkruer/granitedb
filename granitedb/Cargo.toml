@@ -15,6 +15,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 crc32fast = { workspace = true }
 bytes = { workspace = true }
+log = "0.4.27"
 
 [features]
 # compression = ["zstd"]

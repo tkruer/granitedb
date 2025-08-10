@@ -1,76 +1,52 @@
-use anyhow::{bail, Result};
-use crc32fast::Hasher;
-use std::{
-    fs::{File, OpenOptions},
-    io::{self, Read, Seek, SeekFrom, Write},
-    path::Path,
-};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 
-pub struct Wal {
-    f: File,
+pub struct WriteAheadLog {
+    file: File,
 }
 
-impl Wal {
-    pub fn open(path: &Path) -> Result<Self> {
-        let f = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(path)?;
-        Ok(Self { f })
+impl WriteAheadLog {
+    pub fn new<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        Ok(Self { file })
     }
 
-    pub fn append(&mut self, seq: u64, key: &[u8], val: &[u8], fsync: bool) -> Result<u64> {
-        let mut buf = Vec::with_capacity(8 + 4 + 4 + key.len() + val.len() + 4);
-        buf.extend_from_slice(&seq.to_le_bytes());
-        buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
-        buf.extend_from_slice(&(val.len() as u32).to_le_bytes());
-        buf.extend_from_slice(key);
-        buf.extend_from_slice(val);
-
-        let mut h = Hasher::new();
-        h.update(&buf);
-        let crc = h.finalize();
-        buf.extend_from_slice(&crc.to_le_bytes());
-
-        self.f.seek(SeekFrom::End(0))?;
-        self.f.write_all(&buf)?;
-        if fsync {
-            self.f.sync_all()?;
-        }
-        Ok(buf.len() as u64)
+    pub fn log_put(&mut self, key: &str, value: &str) -> std::io::Result<()> {
+        writeln!(self.file, "put:{}:{}", key, value)?;
+        self.file.flush()?;
+        Ok(())
     }
 
-    pub fn replay(&mut self, mut visit: impl FnMut(u64, &[u8], &[u8]) -> Result<()>) -> Result<()> {
-        self.f.seek(SeekFrom::Start(0))?;
-        let mut rdr = io::BufReader::new(&self.f);
-        loop {
-            let mut header = [0u8; 8 + 4 + 4];
-            if rdr.read_exact(&mut header).is_err() {
-                break;
-            } // EOF
-            let seq = u64::from_le_bytes(header[0..8].try_into().unwrap());
-            let klen = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
-            let vlen = u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
+    pub fn log_delete(&mut self, key: &str) -> std::io::Result<()> {
+        writeln!(self.file, "del:{}", key)?;
+        self.file.flush()?;
+        Ok(())
+    }
 
-            let mut kv = vec![0u8; klen + vlen];
-            rdr.read_exact(&mut kv)?;
+    pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<(String, Option<String>)>> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
 
-            let mut crc_buf = [0u8; 4];
-            rdr.read_exact(&mut crc_buf)?;
-            let want = u32::from_le_bytes(crc_buf);
+        let mut ops = Vec::new();
 
-            let mut h = Hasher::new();
-            h.update(&header);
-            h.update(&kv);
-            let got = h.finalize();
-            if got != want {
-                bail!("WAL CRC mismatch");
+        for line in reader.lines() {
+            let line = line?;
+            if line.starts_with("put:") {
+                if let Some((k, v)) = line["put:".len()..].split_once(':') {
+                    ops.push((k.to_string(), Some(v.to_string())));
+                }
+            } else if line.starts_with("del:") {
+                let key = line["del:".len()..].to_string();
+                ops.push((key, None));
             }
-
-            let (k, v) = kv.split_at(klen);
-            visit(seq, k, v)?;
         }
+
+        Ok(ops)
+    }
+
+    pub fn reset<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
+        File::create(path)?; // truncates the file
         Ok(())
     }
 }

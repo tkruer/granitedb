@@ -1,6 +1,5 @@
 [workspace]
 members = ["granitedb", "granitedb-cli"]
-
 resolver = "2"
 
 [workspace.package]
