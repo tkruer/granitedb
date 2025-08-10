@@ -1,0 +1,20 @@
+[package]
+name = "granitedb"
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Embedded LSM-tree key-value store in Rust."
+
+[lib]
+name = "granitedb"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+crc32fast = { workspace = true }
+bytes = { workspace = true }
+
+[features]
+# compression = ["zstd"]

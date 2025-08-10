@@ -1,0 +1,34 @@
+[workspace]
+members = ["granitedb", "granitedb-cli"]
+
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Tyler Kruer <tyler@tkruer.com>"]
+repository = "https://github.com/tkruer/granitedb"
+homepage = "https://github.com/tkruer/granitedb"
+readme = "README.md"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+crc32fast = "1"
+bytes = "1"
+
+zstd = "0.13"
+rand = "0.8"
+getrandom = "0.2"
+ahash = "0.8"
+
+[workspace.lints.rust]
+# tighten later as the code matures
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "allow"
+nursery = "allow"
